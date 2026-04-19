@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Xtract</title>
+  <style>
+    body {
+      width: 250px;
+      padding: 15px;
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0 0 15px 0;
+      color: #2c3e50;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 10px;
+      background-color: #3498db;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    .secondary {
+      background-color: #95a5a6;
+    }
+
+    .secondary:hover {
+      background-color: #7f8c8d;
+    }
+
+    .info {
+      font-size: 12px;
+      color: #7f8c8d;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #ecf0f1;
+    }
+
+    .shortcut {
+      font-family: monospace;
+      background: #ecf0f1;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Xtract</h1>
+  <button id="extract-btn">Extract Current Page</button>
+  <button id="options-btn" class="secondary">Settings</button>
+
+  <div class="info">
+    Keyboard shortcut: <span class="shortcut">Ctrl+Shift+E</span>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

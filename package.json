@@ -1,0 +1,20 @@
+{
+  "name": "xtract",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package": "rm -f xtract.zip && zip -r xtract.zip manifest.json content.js background.js popup.js popup.html options.js options.html toast.css lib/ icons/ && echo 'Packaged: xtract.zip'"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dom-to-semantic-markdown": "^1.5.0"
+  }
+}

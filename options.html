@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Xtract - Options</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 10px;
+    }
+
+    .subtitle {
+      color: #7f8c8d;
+      margin-bottom: 30px;
+    }
+
+    .section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    h2 {
+      margin-top: 0;
+      color: #34495e;
+      font-size: 18px;
+    }
+
+    .domain-list {
+      margin-bottom: 20px;
+    }
+
+    .domain-item {
+      background: #ecf0f1;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .domain-info {
+      flex: 1;
+    }
+
+    .domain-name {
+      font-weight: bold;
+      color: #2c3e50;
+      margin-bottom: 5px;
+    }
+
+    .domain-details {
+      font-size: 12px;
+      color: #7f8c8d;
+    }
+
+    .domain-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    button:hover {
+      background-color: #2980b9;
+    }
+
+    button.delete {
+      background-color: #e74c3c;
+    }
+
+    button.delete:hover {
+      background-color: #c0392b;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #2c3e50;
+      font-weight: 500;
+    }
+
+    input[type="text"],
+    textarea {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #bdc3c7;
+      border-radius: 4px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #95a5a6;
+    }
+
+    .message {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+
+    .message.success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Xtract Settings</h1>
+  <p class="subtitle">Configure per-domain extraction rules</p>
+
+  <div id="message" class="message hidden"></div>
+
+  <div class="section">
+    <h2>General Settings</h2>
+    <form id="general-settings-form">
+      <div class="form-group">
+        <label for="upload-url">Upload URL (optional)</label>
+        <div style="margin-bottom: 5px; font-size: 12px; color: #666;">
+          If set, the extension will POST the zip file to this URL instead of downloading it.
+        </div>
+        <input type="text" id="upload-url" placeholder="http://localhost:9809">
+      </div>
+      <div class="form-actions">
+        <button type="submit">Save Settings</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="section">
+    <h2>Domain Rules</h2>
+    <div id="domain-list" class="domain-list"></div>
+    <button id="add-domain-btn">Add Domain Rule</button>
+  </div>
+
+  <div id="domain-form" class="section hidden">
+    <h2 id="form-title">Add Domain Rule</h2>
+    <form id="rule-form">
+      <input type="hidden" id="edit-index" value="">
+
+      <div class="form-group">
+        <label for="domain">Domain (e.g., example.com or *.github.com)</label>
+        <input type="text" id="domain" required placeholder="example.com">
+      </div>
+
+      <div class="form-group">
+        <label for="root-selector">Root Selector (default: #chat-history)</label>
+        <input type="text" id="root-selector" placeholder="#chat-history">
+      </div>
+
+      <div class="form-group">
+        <label for="code-block-selector">Code Block Selector (default: .code-block)</label>
+        <input type="text" id="code-block-selector" placeholder=".code-block, pre">
+      </div>
+
+      <div class="form-group">
+        <label for="blockquote-selector">Blockquote Selector (optional)</label>
+        <input type="text" id="blockquote-selector" placeholder="blockquote, .quote">
+      </div>
+
+      <div class="form-group">
+        <label for="title-selector">Title Selector (optional)</label>
+        <input type="text" id="title-selector" placeholder="h1, .page-title">
+      </div>
+
+      <div class="form-group">
+        <label for="exclude-selectors">Exclude Selectors (comma-separated)</label>
+        <textarea id="exclude-selectors" placeholder=".ad, .sidebar, .navigation"></textarea>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit">Save Rule</button>
+        <button type="button" id="cancel-btn">Cancel</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

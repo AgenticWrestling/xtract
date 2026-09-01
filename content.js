@@ -1,12 +1,19 @@
 // Content script for Xtract - extracts page to markdown with media
 
-// Prevent multiple injections
+// Prevent multiple injections. chrome.scripting.executeScript re-injects this
+// file into the same frame's isolated world on every extraction trigger, and
+// that world persists across injections - so top-level `let`/`const` below
+// would throw "already declared" SyntaxErrors on the second run if we didn't
+// wrap everything in a function scope and bail out early here.
 if (window.xtractLoaded) {
   console.log('Xtract content script already loaded');
 } else {
   window.xtractLoaded = true;
   console.log('Xtract content script loading...');
+  initXtract();
 }
+
+function initXtract() {
 
 // Toast UI functions
 let toastElement = null;
@@ -354,12 +361,13 @@ async function downloadMedia(url) {
   try {
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
+      console.warn(`Can't download ${url}: HTTP ${response.status}`);
+      return null;
     }
-    const blob = await response.blob();
-    return blob;
+    return await response.blob();
   } catch (error) {
-    console.error(`Error downloading ${url}:`, error);
+    const reason = error.message.includes('fetch') ? 'CORS or network error' : error.message;
+    console.warn(`Can't download ${url}: ${reason}`);
     return null;
   }
 }
@@ -478,47 +486,55 @@ async function extractPage() {
     console.log('Xtract: Starting extraction...');
     showToast('Extracting DOM...');
 
-    // Load configuration
-    console.log('Xtract: Loading config...');
     const config = await loadConfig();
     console.log('Xtract: Config loaded:', config);
 
-    // Find root element
-    const root = findRootElement(config);
+    // Check for a site-specific extractor registered by an injected extractor script
+    const hostname = window.location.hostname;
+    const siteExtractor = window.xtractExtractors && (
+      window.xtractExtractors[hostname] ||
+      Object.keys(window.xtractExtractors).find(k => hostname === k || hostname.endsWith('.' + k))
+        ? window.xtractExtractors[Object.keys(window.xtractExtractors).find(k => hostname === k || hostname.endsWith('.' + k))]
+        : null
+    );
 
-    // Clone and preprocess
-    const processed = preprocessDOM(root, config.codeBlockSelector);
-
-    // Remove excluded elements
-    removeExcludedElements(processed, config.excludeSelectors);
-
-    // Determine page title
     let rawTitle = document.title;
     if (config.titleSelector) {
       try {
         const titleEl = document.querySelector(config.titleSelector);
-        if (titleEl) {
-           rawTitle = titleEl.textContent.trim();
-           console.log(`Found title using selector '${config.titleSelector}': ${rawTitle}`);
-        }
+        if (titleEl) rawTitle = titleEl.textContent.trim();
       } catch (e) {
         console.warn('Invalid title selector:', e);
       }
     }
 
-    showToast('Converting to markdown...');
+    let markdown;
+    let mediaSourceRoot;
 
-    // Convert to markdown
-    let markdown = convertToMarkdown(processed, config, rawTitle);
+    if (siteExtractor) {
+      showToast('Using site extractor...');
+      const root = findRootElement(config);
+      const extracted = siteExtractor(root);
+      if (extracted) {
+        const locationUrl = window.location.href;
+        markdown = `---\nlocation: "${locationUrl}"\n---\n\n${extracted}`;
+        mediaSourceRoot = root;
+      }
+    }
 
-    // Collect media
-    const { mediaFiles, markdown: updatedMarkdown } = await collectMedia(root, markdown);
+    if (!markdown) {
+      // Generic path
+      const root = findRootElement(config);
+      const processed = preprocessDOM(root, config.codeBlockSelector || '');
+      removeExcludedElements(processed, config.excludeSelectors);
+      showToast('Converting to markdown...');
+      markdown = convertToMarkdown(processed, config, rawTitle);
+      mediaSourceRoot = root;
+    }
 
-    // Sanitize title for filename
-    let pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim();
-    pageTitle = pageTitle || 'extracted';
+    const { mediaFiles, markdown: updatedMarkdown } = await collectMedia(mediaSourceRoot, markdown);
 
-    // Generate and download zip
+    let pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim() || 'extracted';
     await generateZip(updatedMarkdown, mediaFiles, pageTitle);
 
   } catch (error) {
@@ -527,6 +543,241 @@ async function extractPage() {
     hideToast(4000);
   }
 }
+
+// Return all currently rendered message items, sorted by their top position
+function renderedMessageItems() {
+  return Array.from(
+    document.querySelectorAll('[data-feat="message"].c-virtual_list__item[data-item-key]')
+  ).sort((a, b) => parseFloat(a.style.top) - parseFloat(b.style.top));
+}
+
+// Scroll to the very top by repeatedly scrollIntoView-ing the topmost rendered item
+// until no new items appear above it.
+async function scrollToTop() {
+  showToast('Scrolling to top...');
+  let stableRounds = 0;
+  let lastTopKey = null;
+
+  while (stableRounds < 3) {
+    const items = renderedMessageItems();
+    if (!items.length) break;
+
+    const topItem = items[0];
+    topItem.scrollIntoView({ block: 'start', behavior: 'instant' });
+    await new Promise(r => setTimeout(r, 800));
+
+    const newTopKey = topItem.dataset.itemKey;
+    const newItems = renderedMessageItems();
+    const newTopItemKey = newItems[0]?.dataset.itemKey || null;
+
+    if (newTopItemKey === lastTopKey) {
+      stableRounds++;
+    } else {
+      stableRounds = 0;
+      lastTopKey = newTopItemKey;
+    }
+  }
+}
+
+// Extract all rows of a paginated table via a registered site paginator,
+// producing a single JSON file instead of markdown/media.
+async function extractAllViaPaginator(paginator) {
+  try {
+    showToast('Starting paginated extraction...');
+
+    const result = await paginator((count, page) => {
+      showToast(`Extracting... page ${page}, ${count} rows`);
+    });
+
+    if (!result) {
+      showToast('No table found to extract', true);
+      hideToast(4000);
+      return;
+    }
+
+    const jsonString = JSON.stringify(result, null, 2);
+    const rawTitle = document.title || 'extracted';
+    const pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim() || 'extracted';
+    await generateJsonDownload(jsonString, pageTitle);
+  } catch (error) {
+    console.error('Error during paginated extraction:', error);
+    showToast('Paginated extraction failed: ' + error.message, true);
+    hideToast(4000);
+  }
+}
+
+// Upload (or download) a raw JSON payload, mirroring generateZip's delivery logic.
+async function generateJsonDownload(jsonString, pageTitle) {
+  try {
+    showToast('Preparing JSON file...');
+
+    const sanitizedTitle = sanitizeTitle(pageTitle);
+    const filename = `${sanitizedTitle}.json`;
+    const blob = new Blob([jsonString], { type: 'application/json' });
+
+    try {
+      showToast(`Uploading ${sanitizedTitle} to localhost:9809...`);
+
+      const base64Data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+
+      const response = await chrome.runtime.sendMessage({
+        action: 'upload_zip',
+        filename,
+        data: base64Data
+      });
+
+      if (response && response.success) {
+        showToast(`Uploaded ${filename} to localhost:9809 successfully!`);
+        hideToast();
+        return;
+      } else {
+        console.warn('Upload failed:', response ? response.error : 'Unknown error');
+        showToast('Upload failed, falling back to download...');
+      }
+    } catch (uploadError) {
+      console.warn('Upload to localhost:9809 failed:', uploadError);
+      showToast('Upload failed, falling back to download...');
+    }
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(downloadUrl);
+
+    showToast('Extraction complete!');
+    hideToast();
+  } catch (error) {
+    console.error('Error generating JSON file:', error);
+    showToast('Error creating JSON file', true);
+    hideToast(4000);
+  }
+}
+
+// Extract all messages by scrolling through the full history
+async function extractAllPages() {
+  try {
+    const hostname = window.location.hostname;
+
+    // Prefer a registered paginator (e.g. ServiceNow list tables) over the
+    // Slack-style virtual-scroll walk below.
+    const paginatorKey = window.xtractPaginators && Object.keys(window.xtractPaginators).find(
+      k => hostname === k || hostname.endsWith('.' + k)
+    );
+    if (paginatorKey) {
+      await extractAllViaPaginator(window.xtractPaginators[paginatorKey]);
+      return;
+    }
+
+    showToast('Starting full extraction...');
+
+    const config = await loadConfig();
+    const siteExtractor = window.xtractExtractors && (
+      window.xtractExtractors[hostname] ||
+      (() => {
+        const key = Object.keys(window.xtractExtractors).find(k => hostname === k || hostname.endsWith('.' + k));
+        return key ? window.xtractExtractors[key] : null;
+      })()
+    );
+
+    await scrollToTop();
+
+    // Walk forward through every message item, scrollIntoView to trigger lazy loading,
+    // extract each unseen item as it becomes fully rendered.
+    const seenKeys = new Set();
+    const allMessageBlocks = [];
+    const extractorState = { lastSenderName: '' };
+
+    let stableRounds = 0;
+    let lastBottomKey = null;
+
+    while (stableRounds < 3) {
+      const items = renderedMessageItems();
+      const newItems = items.filter(el => !seenKeys.has(el.dataset.itemKey));
+
+      for (const item of newItems) {
+        item.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        await new Promise(r => setTimeout(r, 80));
+
+        // Skip placeholder/unprocessed items
+        const container = item.querySelector('[data-qa="message_container"]');
+        if (!container || container.dataset.qaUnprocessed === 'true' || container.dataset.qaPlaceholder === 'true') continue;
+
+        seenKeys.add(item.dataset.itemKey);
+
+        if (siteExtractor) {
+          const tempRoot = document.createElement('div');
+          tempRoot.appendChild(item.cloneNode(true));
+          const block = siteExtractor(tempRoot, extractorState);
+          if (block) allMessageBlocks.push(block);
+        } else {
+          const processed = preprocessDOM(item, config.codeBlockSelector || '');
+          removeExcludedElements(processed, config.excludeSelectors);
+          const block = convertToMarkdown(processed, config);
+          if (block) allMessageBlocks.push(block);
+        }
+      }
+
+      showToast(`Extracting... (${seenKeys.size} messages)`);
+
+      // Scroll the last item into view to trigger loading of the next batch
+      const allItems = renderedMessageItems();
+      const bottomItem = allItems[allItems.length - 1];
+      if (bottomItem) bottomItem.scrollIntoView({ block: 'end', behavior: 'instant' });
+      await new Promise(r => setTimeout(r, 600));
+
+      const newBottomKey = bottomItem?.dataset.itemKey || null;
+      if (newBottomKey === lastBottomKey) {
+        stableRounds++;
+      } else {
+        stableRounds = 0;
+        lastBottomKey = newBottomKey;
+      }
+    }
+
+    // Build final markdown
+    let rawTitle = document.title;
+    if (config.titleSelector) {
+      try {
+        const el = document.querySelector(config.titleSelector);
+        if (el) rawTitle = el.textContent.trim();
+      } catch (_) {}
+    }
+
+    const locationUrl = window.location.href;
+    const combined = allMessageBlocks.join('\n');
+    const markdown = `---\nlocation: "${locationUrl}"\n---\n\n${combined}`;
+
+    showToast('Collecting media...');
+    const root = findRootElement(config);
+    const { mediaFiles, markdown: updatedMarkdown } = await collectMedia(root, markdown);
+
+    let pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim() || 'extracted';
+    await generateZip(updatedMarkdown, mediaFiles, pageTitle);
+
+  } catch (error) {
+    console.error('Error during full extraction:', error);
+    showToast('Full extraction failed: ' + error.message, true);
+    hideToast(4000);
+  }
+}
+
+// Direct trigger used by background.js (via chrome.scripting.executeScript func),
+// since chrome.tabs.sendMessage only reaches the top frame by default and some
+// sites (e.g. ServiceNow classic UI) render content in a sub-frame.
+window.xtractTriggerExtraction = function (action) {
+  console.log('Content script triggered directly:', action);
+  if (action === 'extract') extractPage();
+  if (action === 'extract_all') extractAllPages();
+};
 
 // Listen for messages from background script (guard prevents duplicate listeners on re-injection)
 if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
@@ -538,6 +789,10 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
         extractPage();
         sendResponse({ status: 'started' });
       }
+      if (message.action === 'extract_all') {
+        extractAllPages();
+        sendResponse({ status: 'started' });
+      }
       return true;
     });
     console.log('Xtract: Message listener registered');
@@ -545,3 +800,5 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
 } else {
   console.error('Xtract: chrome.runtime.onMessage not available');
 }
+
+} // end initXtract

@@ -1,11 +1,18 @@
 // Background service worker for Xtract extension
 
-// Handle toolbar icon click
-chrome.action.onClicked.addListener((tab) => {
-  if (tab.id) {
-    checkAndExtract(tab);
+// Extractor scripts keyed by hostname pattern
+const SITE_EXTRACTORS = {
+  'slack.com': 'extractors/slack.js',
+  'app.slack.com': 'extractors/slack.js',
+  'service-now.com': 'extractors/servicenow.js',
+};
+
+function extractorForHost(hostname) {
+  for (const [pattern, file] of Object.entries(SITE_EXTRACTORS)) {
+    if (hostname === pattern || hostname.endsWith('.' + pattern)) return file;
   }
-});
+  return null;
+}
 
 // Handle keyboard shortcut
 chrome.commands.onCommand.addListener(async (command) => {
@@ -34,40 +41,68 @@ async function checkAndExtract(tab) {
 }
 
 // Function to inject content script and trigger extraction
-async function extractPage(tabId) {
+async function extractPage(tabId, opts = {}) {
   try {
     console.log('Background: Injecting scripts into tab:', tabId);
 
+    const tab = await chrome.tabs.get(tabId);
+    const hostname = tab.url ? new URL(tab.url).hostname : '';
+    const extractorFile = extractorForHost(hostname);
+
+    // Inject into every frame (not just the top one) since some sites — e.g.
+    // ServiceNow's classic UI — render the actual content inside an iframe
+    // like gsft_main rather than the top-level document.
+
     // Inject JSZip
     await chrome.scripting.executeScript({
-      target: { tabId: tabId },
+      target: { tabId, allFrames: true },
       files: ['lib/jszip.min.js']
     });
 
     // Inject dom-to-semantic-markdown
     await chrome.scripting.executeScript({
-      target: { tabId: tabId },
+      target: { tabId, allFrames: true },
       files: ['lib/dom-to-semantic-markdown.js']
     });
 
+    // Inject site-specific extractor if one exists
+    if (extractorFile) {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        files: [extractorFile]
+      });
+    }
+
     // Inject content script
     await chrome.scripting.executeScript({
-      target: { tabId: tabId },
+      target: { tabId, allFrames: true },
       files: ['content.js']
     });
 
     // Inject toast CSS
     await chrome.scripting.insertCSS({
-      target: { tabId: tabId },
+      target: { tabId, allFrames: true },
       files: ['toast.css']
     });
 
     // Wait a moment for scripts to initialize
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Send message to start extraction
-    console.log('Background: Sending extract message');
-    await chrome.tabs.sendMessage(tabId, { action: 'extract' });
+    // Trigger extraction in every frame directly (rather than via
+    // chrome.tabs.sendMessage, which only reaches the top frame by default).
+    // Each frame's content script checks for a matching table/extractor and
+    // no-ops if it doesn't find one.
+    console.log('Background: Triggering extraction in all frames');
+    const action = opts.extractAll ? 'extract_all' : 'extract';
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: (triggeredAction) => {
+        if (window.xtractTriggerExtraction) {
+          window.xtractTriggerExtraction(triggeredAction);
+        }
+      },
+      args: [action]
+    });
   } catch (error) {
     console.error('Background: Error injecting content script:', error);
   }
@@ -85,6 +120,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'trigger_extract') {
     chrome.tabs.get(message.tabId, (tab) => {
       if (tab) checkAndExtract(tab);
+    });
+    sendResponse({ status: 'triggered' });
+  }
+
+  if (message.action === 'trigger_extract_all') {
+    chrome.tabs.get(message.tabId, async (tab) => {
+      if (tab) await extractPage(tab.id, { extractAll: true });
     });
     sendResponse({ status: 'triggered' });
   }

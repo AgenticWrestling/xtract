@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "xtract: Page to Markdown",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Extract web pages to markdown with media assets in a convenient zipfile",
   "permissions": [
     "activeTab",
@@ -16,6 +16,7 @@
     "service_worker": "background.js"
   },
   "action": {
+    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

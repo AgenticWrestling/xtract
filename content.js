@@ -67,7 +67,9 @@ async function loadConfig() {
   }
 }
 
-// Find root element with fallback strategy
+// Find root element with fallback strategy.
+// Returns null when running in a sub-frame that has no matching content, so
+// the extraction can bail out instead of dumping that frame's <body>.
 function findRootElement(config) {
   const selectors = [
     config.rootSelector,
@@ -79,15 +81,37 @@ function findRootElement(config) {
   ];
 
   for (const selector of selectors) {
+    if (!selector) continue;
+
+    let elements;
     try {
-      const element = document.querySelector(selector);
-      if (element) {
-        console.log(`Found root element using selector: ${selector}`);
-        return element;
-      }
+      elements = document.querySelectorAll(selector);
     } catch (e) {
       // Invalid selector, continue
+      continue;
     }
+
+    if (elements.length === 0) continue;
+
+    if (elements.length === 1) {
+      console.log(`Found root element using selector: ${selector}`);
+      return elements[0];
+    }
+
+    // Several elements match (e.g. Gemini renders one .conversation-container
+    // per turn). Wrap clones of all of them so the whole page is extracted
+    // rather than just the first match.
+    console.log(`Found ${elements.length} root elements using selector: ${selector}`);
+    const wrapper = document.createElement('div');
+    elements.forEach(el => wrapper.appendChild(el.cloneNode(true)));
+    return wrapper;
+  }
+
+  // Sub-frames (ad/auth/widget iframes on sites like Gemini) have no useful
+  // content; extracting their <body> just produces junk output per frame.
+  if (window.top !== window) {
+    console.log('Xtract: no matching root in this sub-frame, skipping');
+    return null;
   }
 
   console.log('Using document.body as fallback');
@@ -511,9 +535,16 @@ async function extractPage() {
     let markdown;
     let mediaSourceRoot;
 
+    const rootElement = findRootElement(config);
+    if (!rootElement) {
+      // Sub-frame with nothing to extract - stay silent so the frame that does
+      // have content owns the toast/output.
+      return;
+    }
+
     if (siteExtractor) {
       showToast('Using site extractor...');
-      const root = findRootElement(config);
+      const root = rootElement;
       const extracted = siteExtractor(root);
       if (extracted) {
         const locationUrl = window.location.href;
@@ -524,7 +555,7 @@ async function extractPage() {
 
     if (!markdown) {
       // Generic path
-      const root = findRootElement(config);
+      const root = rootElement;
       const processed = preprocessDOM(root, config.codeBlockSelector || '');
       removeExcludedElements(processed, config.excludeSelectors);
       showToast('Converting to markdown...');
@@ -757,7 +788,7 @@ async function extractAllPages() {
     const markdown = `---\nlocation: "${locationUrl}"\n---\n\n${combined}`;
 
     showToast('Collecting media...');
-    const root = findRootElement(config);
+    const root = findRootElement(config) || document.body;
     const { mediaFiles, markdown: updatedMarkdown } = await collectMedia(root, markdown);
 
     let pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim() || 'extracted';

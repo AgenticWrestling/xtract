@@ -7,9 +7,50 @@ A Chrome extension that extracts web pages to markdown format with all media ass
 - Extract web pages to semantic markdown using [dom-to-semantic-markdown](https://github.com/romansky/dom-to-semantic-markdown)
 - Download all media assets (images, videos, audio) with simplified filenames
 - Per-domain extraction rules (customize root selector, code block classes, exclude elements)
+- Site-specific extractors for Slack, ServiceNow and Google Docs (see below)
 - Progress toast showing extraction status
 - Two ways to trigger: toolbar icon or keyboard shortcut (Ctrl+Shift+E / Cmd+Shift+E on Mac)
 - Automatic upload to localhost:9809 (with fallback to download)
+
+### Google Docs
+
+Google Docs renders its body text to a canvas, so there is nothing to scrape
+from the page. The extractor instead fetches the document's own HTML export and
+stitches the live comments sidebar onto it, producing markdown with footnote
+markers inline and the comment threads collected at the end:
+
+```markdown
+There are two options for how telemetry[3] can be integrated...
+
+# Comments
+
+^3 "There are two options for how telemetry[3] can be integrated..."
+- 2026-09-01 14:43 (Rosa Delgado) Is "telemetry" the right word here?
+- 2026-09-01 15:10 (Alan Prewitt) Renaming it then.
+```
+
+Only images genuinely embedded in the document are collected as media - avatars,
+emoji-picker sprites and other editor chrome are not. Two known limits:
+
+- Timestamps are resolved from the sidebar's relative labels ("3:48 PM
+  Yesterday"), since Docs exposes nothing more precise to the page. Labels that
+  can't be parsed are kept verbatim.
+- Resolved comment threads are not included - they appear in neither the export
+  nor the sidebar.
+
+## Testing
+
+```bash
+npm install
+npm test
+```
+
+The Google Docs extractor is tested against fixtures in `test/fixtures/` -
+the HTML export and comments sidebar of a real document, captured for their
+structure and then put through `test/fixtures/sanitize.js`, which replaces
+every word of prose with filler and every name, email, link and embedded image
+with a placeholder. The tests therefore assert on shape and counts, never on
+content. Re-run the sanitizer after re-capturing.
 
 ## Installation
 

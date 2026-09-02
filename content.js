@@ -534,6 +534,10 @@ async function extractPage() {
 
     let markdown;
     let mediaSourceRoot;
+    // Extractors that build their own media set (e.g. Google Docs, which pulls
+    // embedded images out of the document export) supply it here, and the
+    // generic DOM media sweep is skipped.
+    let providedMediaFiles = null;
 
     const rootElement = findRootElement(config);
     if (!rootElement) {
@@ -545,11 +549,17 @@ async function extractPage() {
     if (siteExtractor) {
       showToast('Using site extractor...');
       const root = rootElement;
-      const extracted = siteExtractor(root);
+      // Extractors may be async (Google Docs fetches the document export);
+      // awaiting a plain string is harmless for the synchronous ones.
+      const extracted = await siteExtractor(root);
       if (extracted) {
         const locationUrl = window.location.href;
-        markdown = `---\nlocation: "${locationUrl}"\n---\n\n${extracted}`;
-        mediaSourceRoot = root;
+        const body = typeof extracted === 'string' ? extracted : extracted.markdown;
+        markdown = `---\nlocation: "${locationUrl}"\n---\n\n${body}`;
+        mediaSourceRoot = (typeof extracted === 'string' ? null : extracted.mediaRoot) || root;
+        if (typeof extracted !== 'string' && extracted.mediaFiles) {
+          providedMediaFiles = extracted.mediaFiles;
+        }
       }
     }
 
@@ -563,7 +573,9 @@ async function extractPage() {
       mediaSourceRoot = root;
     }
 
-    const { mediaFiles, markdown: updatedMarkdown } = await collectMedia(mediaSourceRoot, markdown);
+    const { mediaFiles, markdown: updatedMarkdown } = providedMediaFiles
+      ? { mediaFiles: providedMediaFiles, markdown }
+      : await collectMedia(mediaSourceRoot, markdown);
 
     let pageTitle = rawTitle.replace(/[^\p{L}\p{N}\s]/gu, '').trim() || 'extracted';
     await generateZip(updatedMarkdown, mediaFiles, pageTitle);
@@ -747,8 +759,8 @@ async function extractAllPages() {
         if (siteExtractor) {
           const tempRoot = document.createElement('div');
           tempRoot.appendChild(item.cloneNode(true));
-          const block = siteExtractor(tempRoot, extractorState);
-          if (block) allMessageBlocks.push(block);
+          const block = await siteExtractor(tempRoot, extractorState);
+          if (block) allMessageBlocks.push(typeof block === 'string' ? block : block.markdown);
         } else {
           const processed = preprocessDOM(item, config.codeBlockSelector || '');
           removeExcludedElements(processed, config.excludeSelectors);

@@ -7,7 +7,7 @@
     "lib": "lib"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "prep": "for s in 16 48 128; do sips -z $s $s icons/icon.png --out icons/icon${s}.png; done",
     "package": "rm -f xtract.zip && zip -r xtract.zip manifest.json content.js background.js popup.js popup.html options.js options.html toast.css lib/ icons/ extractors/ && echo 'Packaged: xtract.zip'"
   },
@@ -17,5 +17,8 @@
   "type": "commonjs",
   "dependencies": {
     "dom-to-semantic-markdown": "^1.5.0"
+  },
+  "devDependencies": {
+    "jsdom": "^30.0.1"
   }
 }

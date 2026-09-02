@@ -5,6 +5,7 @@ const SITE_EXTRACTORS = {
   'slack.com': 'extractors/slack.js',
   'app.slack.com': 'extractors/slack.js',
   'service-now.com': 'extractors/servicenow.js',
+  'docs.google.com': 'extractors/googledocs.js',
 };
 
 function extractorForHost(hostname) {
